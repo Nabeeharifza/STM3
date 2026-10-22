@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>School Timetable Maker</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+:root{--bg:#f6f7fb;--c:#fff;--t:#1d2433;--m:#667085;--p:#4f46e5;--b:#e3e6ef;--er:#dc2626}
+*{box-sizing:border-box}body{margin:0;font:15px/1.45 system-ui,sans-serif;background:var(--bg);color:var(--t)}
+header{background:var(--p);color:#fff;padding:18px 24px}h1{margin:0;font-size:22px}header p{margin:4px 0 0;opacity:.85}
+main{max-width:1150px;margin:auto;padding:16px}
+.steps{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+.steps button{flex:1;min-width:130px;padding:10px;border:1px solid var(--b);background:var(--c);border-radius:8px;cursor:pointer;text-align:left;font:inherit}
+.steps button.on{border-color:var(--p);box-shadow:0 0 0 2px #4f46e533}.steps small{display:block;color:var(--m)}
+.card{background:var(--c);border:1px solid var(--b);border-radius:10px;padding:18px;margin-bottom:14px;overflow-x:auto}
+h2{margin:0 0 4px;font-size:18px}h3{margin:16px 0 8px;font-size:15px}.m{color:var(--m);font-size:13px}
+label{display:block;font-size:13px;color:var(--m);margin:8px 0 3px}
+input,select{font:inherit;padding:7px 9px;border:1px solid var(--b);border-radius:6px;background:#fff;max-width:100%}
+input[type=number]{width:62px}input[type=checkbox]{width:auto}
+.g{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:0 14px}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:end;margin:8px 0}
+button.b{background:var(--p);color:#fff;border:0;padding:8px 14px;border-radius:6px;cursor:pointer;font:inherit}
+button.b.s{background:#eef0ff;color:var(--p)}button.b.d{background:#fee2e2;color:var(--er)}button.b:disabled{opacity:.45;cursor:not-allowed}
+table{border-collapse:collapse;width:100%}th,td{border:1px solid var(--b);padding:6px 8px;text-align:center;font-size:13px}
+th{background:#eef0ff}td.l,th.l{text-align:left}td.blk{background:#fecaca;color:var(--er);font-weight:600}td.brk{background:#f3f4f6;color:var(--m)}
+td.clash{background:#ffedd5!important;color:#9a3412}td.ed{cursor:grab}td.ed:hover{outline:2px solid var(--p);outline-offset:-2px}td.over{outline:2px dashed var(--p)}
+.bl button{width:100%;border:0;background:#f0fdf4;padding:6px;cursor:pointer;font:inherit;font-size:12px}.bl button.x{background:#fecaca;color:var(--er)}
+.chips label{display:inline-flex;gap:4px;align-items:center;margin:2px 10px 2px 0;color:var(--t)}
+.err{background:#fef2f2;color:var(--er);padding:10px;border-radius:8px;margin:8px 0}.ok{background:#f0fdf4;color:#166534;padding:10px;border-radius:8px;margin:8px 0}
+.gr{border:1px solid var(--b);border-radius:8px;padding:12px;margin:10px 0}
+#mod{display:none;position:fixed;inset:0;background:#0008;align-items:center;justify-content:center;z-index:9}#mod .card{width:340px;margin:0}#mod select{width:100%}
+</style></head><body>
+<header><h1>School Timetable Maker</h1><p>Set up your school, generate clash-free timetables, drag tiles to rearrange, and download as PDF, Word or Excel.</p></header>
+<main><div class="steps" id="nav"></div><div id="panel"></div>
+<div class="card"><div class="row"><button class="b" id="genBtn" onclick="gen()">Generate timetable</button>
+<button class="b s" onclick="saveFile()">Save data to file</button><button class="b s" onclick="$('#up').click()">Load data from file</button><input type="file" id="up" accept=".json,application/json" style="display:none" onchange="loadFile(this)"><button class="b d" onclick="resetAll()">Reset everything</button><span class="m" id="need"></span></div><div id="msg"></div></div>
+<div id="out"></div></main><div id="mod"></div>
+<script>
+const DAYS=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'],KEY='ttm2';
+const $=s=>document.querySelector(s),esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const def=()=>({school:{name:'',term:'',startDay:0,days:5,periods:8,dur:40,start:'08:00',breaks:[{name:'Break',after:4,dur:20}],ctf:false,layout:'rows'},grades:[],teachers:[],subjects:[],restr:[],ct:{},tt:null,step:1});
+let S;try{S=JSON.parse(localStorage.getItem(KEY))||def()}catch(e){S=def()}
+const mig=()=>S.restr.forEach(r=>{if(Array.isArray(r.cells)){const o={};(r.grades||[]).forEach(g=>o[g]=[...r.cells]);r.cells=o;delete r.grades}});mig();
+const save=()=>{try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}};
+const setP=(p,v)=>{const a=p.split('|');let o=S;for(let i=0;i<a.length-1;i++){if(o[a[i]]==null)o[a[i]]={};o=o[a[i]]}o[a[a.length-1]]=v};
+const getP=p=>p.split('|').reduce((o,k)=>o==null?o:o[k],S);
+const inp=(p,t='text',x='')=>`<input type="${t}" data-p="${esc(p)}" value="${esc(getP(p))}" ${x}>`;
+const sel=(p,opts,x='')=>`<select data-p="${esc(p)}" ${x}>${opts.map(([v,l])=>`<option value="${esc(v)}" ${String(getP(p))==String(v)?'selected':''}>${esc(l)}</option>`).join('')}</select>`;
+const rng=(a,b)=>Array.from({length:b-a+1},(_,i)=>[a+i,a+i]);
+const classes=()=>S.grades.map(g=>({g:g.name,key:g.name}));
+const dayName=d=>DAYS[(+S.school.startDay+d)%7];
+const col=s=>`hsl(${[...s].reduce((a,c)=>(a*31+c.charCodeAt(0))|0,7)%360},70%,90%)`;
+const uid=()=>Math.random().toString(36).slice(2,9);
+const cfg=()=>({D:+S.school.days,P:+S.school.periods,brk:new Set(S.school.breaks.map(b=>+b.after))});
+const all=()=>S.tt?Object.values(S.tt).flat():[];
+const blk=(c,i)=>(S.tt[c]||[]).find(b=>i>=b.s&&i<b.s+b.len);
+function restr(g,i){const P=+S.school.periods,k=Math.floor(i/P)+'-'+i%P;return S.restr.find(r=>(r.cells[g]||[]).includes(k))}
+function render(){
+ const st=status(),names=['School','Grades','Teachers','Subjects','Restrictions & Class Teachers'];
+ $('#nav').innerHTML=names.map((n,i)=>`<button class="${S.step==i+1?'on':''}" onclick="S.step=${i+1};save();render()">${i+1}. ${n}<small>${st[i]}</small></button>`).join('');
+ $('#panel').innerHTML=[p1,p2,p3,p4,p5][S.step-1]();
+ document.querySelectorAll('[data-p]').forEach(e=>e.onchange=()=>{
+  setP(e.dataset.p,e.type==='checkbox'?e.checked:e.type==='number'?(e.value===''?'':+e.value):e.value);save();e.dataset.r?render():need()});
+ need();renderOut();
+}
+function status(){const sc=S.school;S._ok=[!!sc.name.trim(),S.grades.length>0,S.teachers.length>0,S.subjects.some(x=>Object.values(x.per||{}).some(v=>+v.n))];
+ return[sc.name?'Done':'Required',S.grades.length+' grades',S.teachers.length+' teachers',S.subjects.length+' subjects',S.restr.length+' restrictions'];}
+function need(){const ok=S._ok||[],miss=['school name','grades','teachers','subject periods'].filter((_,i)=>!ok[i]);
+ $('#genBtn').disabled=miss.length>0;$('#need').textContent=miss.length?'Need: '+miss.join(', '):'Ready to generate';}
+function times(){const sc=S.school,[h,m]=sc.start.split(':').map(Number);let t=h*60+m;const f=x=>String(Math.floor(x/60)%24).padStart(2,'0')+':'+String(x%60).padStart(2,'0'),items=[];
+ for(let p=0;p<sc.periods;p++){items.push({t:'p',i:p,label:`P${p+1}\n${f(t)}-${f(t+ +sc.dur)}`});t+=+sc.dur;
+  sc.breaks.filter(b=>+b.after==p+1).forEach(b=>{items.push({t:'b',label:`${b.name||'Break'}\n${f(t)}-${f(t+ +b.dur)}`});t+=+b.dur})}
+ return{items,end:f(t)};}
+/* ---------- steps ---------- */
+function p1(){const sc=S.school,tm=times();
+ return`<div class="card"><h2>School</h2><p class="m">Name, teaching days, periods and hours.</p>
+ <div class="g"><div><label>School name *</label>${inp('school|name')}</div><div><label>Term / academic year</label>${inp('school|term')}</div>
+ <div><label>Week starts on</label>${sel('school|startDay',DAYS.map((d,i)=>[i,d]),'data-r=1')}</div>
+ <div><label>Days per week</label>${sel('school|days',rng(2,7),'data-r=1')}</div>
+ <div><label>Periods per day</label>${sel('school|periods',rng(4,10),'data-r=1')}</div>
+ <div><label>Period duration (min)</label>${inp('school|dur','number','data-r=1')}</div>
+ <div><label>Start time</label>${inp('school|start','time','data-r=1')}</div>
+ <div><label>Timetable layout</label>${sel('school|layout',[['rows','Days in rows'],['cols','Days in columns']])}</div></div>
+ <h3>Breaks</h3>${sc.breaks.map((b,i)=>`<div class="row">${inp('school|breaks|'+i+'|name','text','placeholder=Name data-r=1')}<span class="m">after period</span>${sel('school|breaks|'+i+'|after',rng(1,sc.periods-1),'data-r=1')}${inp('school|breaks|'+i+'|dur','number','data-r=1')}<span class="m">min</span><button class="b d" onclick="S.school.breaks.splice(${i},1);save();render()">Remove</button></div>`).join('')}
+ <button class="b s" onclick="S.school.breaks.push({name:'Break',after:1,dur:15});save();render()">+ Add break</button>
+ <h3>Rules</h3><label class="chips"><input type="checkbox" data-p="school|ctf" ${sc.ctf?'checked':''}> Class teacher takes the first period (when possible)</label>
+ <p class="m">Preview: ${sc.start} → ${tm.end} · ${sc.periods} periods · ${dayName(0)} – ${dayName(sc.days-1)}</p>
+ <button class="b" onclick="S.step=2;save();render()">Next: Grades →</button></div>`}
+function p2(){return`<div class="card"><h2>Grades</h2><p class="m">Add grades one by one. You can add more at any time without redoing anything else.</p>
+ <div class="row"><div><label>Grade name</label><input id="gN" placeholder="e.g. Grade 6"></div><button class="b" onclick="addG()">Add grade</button></div>
+ ${S.grades.map((g,i)=>`<span class="gr" style="display:inline-block;margin:4px">${esc(g.name)} <button class="b d" onclick="delG(${i})">✕</button></span>`).join('')||'<p class="m">No grades yet.</p>'}</div>`}
+function addG(){const n=$('#gN').value.trim();if(n&&!S.grades.some(g=>g.name===n))S.grades.push({name:n});save();render()}
+function delG(i){const n=S.grades[i].name;if(!confirm('Delete '+n+'?'))return;S.grades.splice(i,1);S.subjects.forEach(s=>delete s.per[n]);S.restr.forEach(r=>delete r.cells[n]);delete S.ct[n];if(S.tt)delete S.tt[n];save();render()}
+function p3(){return`<div class="card"><h2>Teachers</h2><p class="m">Just a list of names. You choose who teaches what in the Subjects step. Renaming here updates everywhere.</p>
+ <div class="row"><div><label>Teacher name</label><input id="tN"></div><button class="b" onclick="addT()">Add teacher</button></div>
+ <table><tr><th class="l">Name</th><th></th></tr>${S.teachers.map((t,i)=>`<tr><td class="l"><input value="${esc(t.name)}" onchange="renT(${i},this.value)"></td><td><button class="b d" onclick="delT(${i})">✕</button></td></tr>`).join('')}</table></div>`}
+function addT(){const n=$('#tN').value.trim();if(n&&!S.teachers.some(t=>t.name===n))S.teachers.push({name:n});save();render()}
+function renT(i,v){v=v.trim();const o=S.teachers[i].name;if(!v||S.teachers.some(t=>t.name===v)){render();return}S.teachers[i].name=v;
+ S.subjects.forEach(s=>Object.values(s.per).forEach(p=>{if(p.t===o)p.t=v}));for(const g in S.ct)if(S.ct[g]===o)S.ct[g]=v;all().forEach(b=>{if(b.t===o)b.t=v});save();render()}
+function delT(i){const o=S.teachers[i].name;if(!confirm('Delete '+o+'? Their subject assignments will be cleared.'))return;S.teachers.splice(i,1);
+ S.subjects.forEach(s=>Object.values(s.per).forEach(p=>{if(p.t===o)p.t=''}));for(const g in S.ct)if(S.ct[g]===o)S.ct[g]='';save();render()}
+function p4(){if(!S.grades.length||!S.teachers.length)return'<div class="card"><h2>Subjects</h2><p class="m">Add at least one grade and one teacher first.</p></div>';
+ const T=[['','— choose teacher —'],...S.teachers.map(t=>[t.name,t.name])];
+ return`<div class="card"><h2>Subjects</h2><p class="m">Add a subject, then for each grade set periods per week, how many are <b>double periods</b> (always back-to-back, never split by a break), and the teacher. Leave periods empty if a grade doesn't take it.</p>
+ <div class="row"><div><label>Subject name</label><input id="sN"></div><button class="b" onclick="addS()">Add subject</button></div></div>
+ ${S.subjects.map((s,i)=>`<div class="card"><div class="row"><div><label>Subject</label><input value="${esc(s.name)}" onchange="renS(${i},this.value)"></div><button class="b d" onclick="delS(${i})">Delete subject</button></div>
+ <label>Only on these days (leave all unticked for any day)</label><div class="chips">${Array.from({length:+S.school.days},(_,d)=>`<label><input type="checkbox" ${(s.days||[]).includes(d)?'checked':''} onchange="togD(${i},${d},this.checked)"> ${dayName(d)}</label>`).join('')}</div>
+ <table><tr><th class="l">Grade</th><th>Periods / week</th><th>Of which doubles</th><th class="l">Teacher</th></tr>
+ ${S.grades.map(g=>`<tr><td class="l">${esc(g.name)}</td><td>${inp(`subjects|${i}|per|${g.name}|n`,'number','min=0')}</td><td>${inp(`subjects|${i}|per|${g.name}|d`,'number','min=0')}</td><td class="l">${sel(`subjects|${i}|per|${g.name}|t`,T)}</td></tr>`).join('')}</table></div>`).join('')}`}
+function addS(){const n=$('#sN').value.trim();if(n&&!S.subjects.some(s=>s.name===n))S.subjects.push({name:n,days:[],per:{}});save();render()}
+function delS(i){if(confirm('Delete '+S.subjects[i].name+'?')){S.subjects.splice(i,1);save();render()}}
+function renS(i,v){v=v.trim();const o=S.subjects[i].name;if(!v||S.subjects.some(s=>s.name===v)){render();return}S.subjects[i].name=v;all().forEach(b=>{if(b.sub===o)b.sub=v});save();render()}
+function togD(i,d,on){const s=S.subjects[i];s.days=(s.days||[]).filter(x=>x!==d);if(on)s.days.push(d);save()}
+function p5(){const sc=S.school,T=[['','—'],...S.teachers.map(t=>[t.name,t.name])];
+ return`<div class="card"><h2>Restrictions</h2><p class="m">Create named restrictions (e.g. Assembly, Sports, Lunch Duty), then block periods separately for each grade. Blocked periods show the restriction's name in the timetable and get no lessons.</p>
+ <div class="row"><div><label>Restriction name</label><input id="rN" placeholder="e.g. Assembly"></div><button class="b" onclick="addR()">Add restriction</button></div>
+ ${S.restr.map((r,i)=>`<div class="gr"><div class="row"><div><label>Name</label><input value="${esc(r.name)}" onchange="S.restr[${i}].name=this.value;save();renderOut()"></div><button class="b d" onclick="S.restr.splice(${i},1);save();render()">Delete restriction</button></div>
+ <p class="m">Set the blocked periods separately for each grade:</p>
+ ${S.grades.map((g,gi)=>{const cs=r.cells[g.name]||[];return`<div style="margin:12px 0"><div class="row" style="margin:0 0 4px"><b>${esc(g.name)}</b><button class="b s" onclick="cpR(${i},${gi})">Copy to all grades</button><button class="b s" onclick="S.restr[${i}].cells['${esc(g.name).replace(/'/g,"\\'")}']=[];save();render()">Clear</button></div>
+ <table class="bl"><tr><th></th>${Array.from({length:+sc.periods},(_,p)=>`<th>P${p+1}</th>`).join('')}</tr>
+ ${Array.from({length:+sc.days},(_,d)=>`<tr><th class="l">${dayName(d)}</th>${Array.from({length:+sc.periods},(_,p)=>{const x=cs.includes(d+'-'+p);return`<td style="padding:0"><button class="${x?'x':''}" onclick="tgR(${i},${gi},${d},${p})">${x?'Blocked':'Open'}</button></td>`}).join('')}</tr>`).join('')}</table></div>`}).join('')}</div>`).join('')||'<p class="m">No restrictions yet.</p>'}</div>
+ <div class="card"><h2>Class teachers</h2><p class="m">Used by the "class teacher takes first period" rule (School step).</p><table><tr><th class="l">Grade</th><th class="l">Class teacher</th></tr>${S.grades.map(g=>`<tr><td class="l">${esc(g.name)}</td><td class="l">${sel('ct|'+g.name,T)}</td></tr>`).join('')}</table></div>`}
+function addR(){const n=$('#rN').value.trim();if(n)S.restr.push({name:n,cells:{}});save();render()}
+function tgR(i,gi,d,p){const r=S.restr[i],g=S.grades[gi].name,k=d+'-'+p;r.cells[g]=r.cells[g]||[];const j=r.cells[g].indexOf(k);j<0?r.cells[g].push(k):r.cells[g].splice(j,1);save();render()}
+function cpR(i,gi){const r=S.restr[i],c=r.cells[S.grades[gi].name]||[];S.grades.forEach(g=>r.cells[g.name]=[...c]);save();render()}
+/* ---------- solver ---------- */
+function okStatic(g,sub,len,i){const{D,P,brk}=cfg(),d=Math.floor(i/P),p=i%P;if(d>=D||p+len>P)return false;
+ for(let k=1;k<len;k++)if(brk.has(p+k))return false;
+ for(let k=0;k<len;k++)if(restr(g,i+k))return false;
+ const sb=S.subjects.find(x=>x.name===sub);return!(sb&&sb.days&&sb.days.length&&!sb.days.includes(d))}
+function solve(units,fixed,hint){const{D,P}=cfg(),N=D*P;hint=hint||{};solve.fails={};
+ const opts=units.map(u=>{let o=0;for(let i=0;i<N;i++)if(okStatic(u.c,u.sub,u.len,i))o++;return o});
+ const fx=new Set(fixed),t0=Date.now();
+ for(let tr=0;tr<300&&Date.now()-t0<3000;tr++){
+  const cm={},tm={},cnt={},placed=new Set(),key=b=>b.c+'|'+b.sub+'|'+Math.floor(b.s/P);
+  const add=b=>{cm[b.c]=cm[b.c]||{};tm[b.t]=tm[b.t]||{};for(let k=0;k<b.len;k++){cm[b.c][b.s+k]=b;tm[b.t][b.s+k]=b}cnt[key(b)]=(cnt[key(b)]||0)+1};
+  const rm=b=>{for(let k=0;k<b.len;k++){delete cm[b.c][b.s+k];delete tm[b.t][b.s+k]}cnt[key(b)]--};
+  fixed.forEach(add);
+  const q=units.map((u,j)=>({u:{...u},k:opts[j]+Math.random()*6})).sort((a,b)=>a.k-b.k).map(x=>x.u);
+  let steps=0,fail=null;
+  while(q.length&&steps++<3000){const u=q.shift();cm[u.c]=cm[u.c]||{};tm[u.t]=tm[u.t]||{};let bs=1e9,bi=-1,cs=[];
+   for(let i=0;i<N;i++){if(!okStatic(u.c,u.sub,u.len,i))continue;
+    const hits=new Set();let hard=false;
+    for(let k=0;k<u.len;k++)for(const m of[cm[u.c][i+k],tm[u.t][i+k]])if(m){if(fx.has(m))hard=true;else hits.add(m)}
+    if(hard)continue;
+    let sc=Math.random()*3+10*(cnt[u.c+'|'+u.sub+'|'+Math.floor(i/P)]||0)+hits.size*1000;
+    if(S.school.ctf&&i%P==0)sc+=S.ct[u.c]===u.t?-8:4;
+    if(hint[u.id]===i)sc-=30;
+    if(sc<bs){bs=sc;bi=i;cs=[...hits]}}
+   if(bi<0){fail=u;break}
+   cs.forEach(m=>{rm(m);placed.delete(m);q.push(m)});
+   u.s=bi;add(u);placed.add(u)}
+  if(!q.length&&!fail)return[...placed].map(b=>{const{...r}=b;return r});
+  const f=fail||q[0];if(f){const k=f.c+' – '+f.sub+' ('+f.t+')';solve.fails[k]=(solve.fails[k]||0)+1}}
+ return null}
+function diagnose(units){const{D,P}=cfg(),N=D*P,E=[],by={},tl={};
+ units.forEach(u=>{(by[u.c+'|'+u.sub]=by[u.c+'|'+u.sub]||[]).push(u);(tl[u.t]=tl[u.t]||[]).push(u)});
+ for(const k in by){const us=by[k],u=us[0],n=us.reduce((a,x)=>a+x.len,0);let f=0,d2=0;for(let i=0;i<N;i++){if(okStatic(u.c,u.sub,1,i))f++;if(okStatic(u.c,u.sub,2,i))d2++}
+  if(f<n)E.push(`${u.sub} in ${u.c} needs ${n} periods but only ${f} are possible after restrictions and its allowed days.`);
+  if(us.some(x=>x.len==2)&&!d2)E.push(`${u.sub} in ${u.c} has double periods but no two back-to-back free periods exist (breaks, restrictions or day limits are in the way).`)}
+ for(const t in tl){const us=tl[t],n=us.reduce((a,x)=>a+x.len,0),sl=new Set();us.forEach(u=>{for(let i=0;i<N;i++)if(okStatic(u.c,u.sub,1,i))sl.add(i)});
+  if(n>sl.size)E.push(`${t} must teach ${n} periods but is only available in ${sl.size} possible periods (check restrictions and subject days).`)}
+ S.grades.forEach(g=>{const gs=S.subjects.filter(x=>+((x.per||{})[g.name]||{}).n),sets=[Array.from({length:D},(_,d)=>d),...gs.filter(x=>x.days&&x.days.length).map(x=>x.days)];
+  sets.forEach(A=>{let need=0,av=0;gs.forEach(x=>{const dd=x.days&&x.days.length?x.days:null;if(dd?dd.every(d=>A.includes(d)):A.length==D)need+=+x.per[g.name].n});
+   for(const d of A)for(let p=0;p<P;p++)if(!restr(g.name,d*P+p))av++;
+   if(need>av)E.push(`${g.name}: lessons that must fall on ${A.map(dayName).join('/')} need ${need} periods but only ${av} are free there.`)})});
+ return[...new Set(E)]}
+function group(list){const o={};S.grades.forEach(g=>o[g.name]=[]);list.forEach(b=>(o[b.c]=o[b.c]||[]).push(b));return o}
+function gen(){const{D,P}=cfg(),errs=[],units=[];
+ S.grades.forEach(g=>{let tot=0;S.subjects.forEach(sb=>{const v=(sb.per||{})[g.name];if(!v||!+v.n)return;const n=+v.n,dbl=Math.min(+v.d||0,n>>1);tot+=n;
+  if(!v.t){errs.push(`Choose a teacher for ${sb.name} in ${g.name}.`);return}
+  for(let i=0;i<dbl;i++)units.push({id:uid(),c:g.name,sub:sb.name,t:v.t,len:2});for(let i=0;i<n-2*dbl;i++)units.push({id:uid(),c:g.name,sub:sb.name,t:v.t,len:1})});
+  });
+ if(!errs.length)errs.push(...diagnose(units));
+ if(errs.length){$('#msg').innerHTML=errs.map(e=>`<div class="err">${esc(e)}</div>`).join('');return}
+ const res=solve(units,[]);
+ if(!res){const f=Object.entries(solve.fails).sort((a,b)=>b[1]-a[1]).slice(0,3).map(x=>x[0]);$('#msg').innerHTML=`<div class="err">Couldn't fit every lesson without clashes. Hardest to place: ${esc(f.join('; '))}. This usually means a teacher is overloaded (teaching many grades at once), too many periods are blocked, a subject is limited to too few days, or there are too many doubles. Relax one of these for the lessons named.</div>`;return}
+ S.tt=group(res);save();$('#msg').innerHTML='<div class="ok">Timetable generated with no clashes. Drag tiles to move them; click a tile to edit it.</div>';renderOut();$('#out').scrollIntoView({behavior:'smooth'})}
+/* ---------- move / edit ---------- */
+let drag=null;
+function ds(e,id,pos){drag={id,pos};e.dataTransfer.setData('text','x')}
+function dp(e,i){e.preventDefault();document.querySelectorAll('.over').forEach(x=>x.classList.remove('over'));if(drag){mv(view.k,drag.id,i-drag.pos);drag=null}}
+function mv(c,id,ns){const bl=S.tt[c].find(b=>b.id==id);if(!bl||ns===bl.s)return;
+ if(!okStatic(c,bl.sub,bl.len,ns)){alert("That spot isn't allowed: it crosses a break, hits a restricted period, is the wrong day for this subject, or doesn't fit.");return}
+ const A=all(),hit=b=>b.id!=id&&b.s<ns+bl.len&&ns<b.s+b.len&&(b.c===c||b.t===bl.t),disp=A.filter(hit),fixed=A.filter(b=>b.id!=id&&!hit(b)),hint={};
+ disp.forEach(b=>hint[b.id]=bl.s);
+ const res=solve(disp,[...fixed,{...bl,s:ns}],hint);
+ if(!res){alert('Could not rearrange the other lessons to make room for that move, so nothing was changed.');return}
+ S.tt=group([...fixed,{...bl,s:ns},...res]);save();renderOut();
+ if(disp.length)$('#msg').innerHTML=`<div class="ok">Moved. ${disp.length} other lesson(s) were automatically rearranged to fit.</div>`}
+function openEd(i){const g=view.k,P=+S.school.periods,b=blk(g,i);
+ const subs=S.subjects.filter(x=>+((x.per||{})[g]||{}).n||(b&&b.sub===x.name));
+ $('#mod').innerHTML=`<div class="card"><h2>${esc(g)}</h2><p class="m">${esc(dayName(Math.floor(i/P)))} · Period ${i%P+1}${b&&b.len>1?' · double period (both periods change)':''}</p>
+ <label>Subject</label><select id="eS" onchange="edT()"><option value="">— Free —</option>${subs.map(x=>`<option ${b&&b.sub==x.name?'selected':''}>${esc(x.name)}</option>`).join('')}</select>
+ <label>Teacher</label><select id="eT">${S.teachers.map(t=>`<option>${esc(t.name)}</option>`).join('')}</select>
+ <div class="row"><button class="b" onclick="saveEd(${i})">Save</button><button class="b s" onclick="$('#mod').style.display='none'">Cancel</button></div></div>`;
+ $('#mod').style.display='flex';edT(b&&b.t)}
+function edT(want){const sub=$('#eS').value,g=view.k,v=((S.subjects.find(x=>x.name===sub)||{}).per||{})[g];want=(typeof want=='string'&&want)||(v&&v.t);
+ if(want)$('#eT').value=want;$('#eT').disabled=!sub}
+function saveEd(i){const sub=$('#eS').value,t=$('#eT').value,g=view.k,b=blk(g,i),len=b?b.len:1,s=b?b.s:i;
+ if(sub&&all().some(x=>x!==b&&x.t===t&&x.s<s+len&&s<x.s+x.len)&&!confirm(t+' is already teaching at this time. Save anyway?'))return;
+ if(b){if(sub){b.sub=sub;b.t=t}else S.tt[g]=S.tt[g].filter(x=>x!==b)}else if(sub)S.tt[g].push({id:uid(),c:g,sub,t,len:1,s:i});
+ save();$('#mod').style.display='none';renderOut()}
+/* ---------- output ---------- */
+let view={m:'c',k:null},scope='one';
+const tnames=()=>[...new Set(all().map(b=>b.t))].sort();
+function grid(kind,key){const{D,P}=cfg(),tm=times().items;
+ const cell=(d,p)=>{const i=d*P+p;
+  if(kind=='c'){const r=restr(key,i);if(r)return{t:r.name,c:'blk'};const b=blk(key,i);if(!b)return{t:'',i};
+   const clash=all().some(x=>x.id!=b.id&&x.t===b.t&&x.s<b.s+b.len&&b.s<x.s+x.len);
+   return{t:b.sub+'\n'+b.t,i,id:b.id,pos:i-b.s,bg:clash?'':col(b.sub),c:clash?'clash':''}}
+  const b=all().find(x=>x.t===key&&i>=x.s&&i<x.s+x.len);return{t:b?b.sub+'\n'+b.c:'',bg:b?col(b.sub):''}};
+ if(S.school.layout=='cols')return{head:['Period',...Array.from({length:D},(_,d)=>dayName(d))],body:tm.map(it=>[{t:it.label,c:'l'},...Array.from({length:D},(_,d)=>it.t=='b'?{t:'Break',c:'brk'}:cell(d,it.i))])};
+ return{head:['Day',...tm.map(it=>it.label)],body:Array.from({length:D},(_,d)=>[{t:dayName(d),c:'l'},...tm.map(it=>it.t=='b'?{t:'Break',c:'brk'}:cell(d,it.i))])}}
+function renderOut(){if(!S.tt){$('#out').innerHTML='';return}
+ const keys=view.m=='c'?classes().map(c=>c.key).filter(k=>S.tt[k]):tnames();
+ if(!keys.includes(view.k))view.k=keys[0];
+ const g=grid(view.m,view.k);
+ $('#out').innerHTML=`<div class="card"><h2>Timetables</h2><p class="m">Class view: drag a tile onto another period to move it (other lessons rearrange automatically; doubles move as one block). Click a tile to change its subject/teacher. Orange = teacher double-booked.</p><div class="row">
+ <select onchange="view.m=this.value;view.k=null;renderOut()"><option value="c" ${view.m=='c'?'selected':''}>Class view</option><option value="t" ${view.m=='t'?'selected':''}>Teacher view</option></select>
+ <select onchange="view.k=this.value;renderOut()">${keys.map(k=>`<option ${k==view.k?'selected':''}>${esc(k)}</option>`).join('')}</select>
+ <span class="m">Download:</span><select onchange="scope=this.value"><option value="one" ${scope=='one'?'selected':''}>This timetable</option><option value="c" ${scope=='c'?'selected':''}>All classes</option><option value="t" ${scope=='t'?'selected':''}>All teachers</option></select>
+ <button class="b" onclick="dl('pdf')">PDF</button><button class="b s" onclick="dl('doc')">Word</button><button class="b s" onclick="dl('xls')">Excel</button></div>
+ <table><tr>${g.head.map(h=>`<th>${esc(h).replace(/\n/g,'<br>')}</th>`).join('')}</tr>${g.body.map(r=>`<tr>${r.map(c=>{const e=c.id!=null;
+  return`<td class="${c.c||''} ${e?'ed':''}" ${c.bg?`style="background:${c.bg}"`:''} ${e?`draggable="true" ondragstart="ds(event,'${c.id}',${c.pos})" onclick="openEd(${c.i})"`:''} ${c.i!=null&&view.m=='c'?`ondragover="event.preventDefault();this.classList.add('over')" ondragleave="this.classList.remove('over')" ondrop="dp(event,${c.i})" ${e?'':`onclick="openEd(${c.i})"`}`:''}>${esc(c.t).replace(/\n/g,'<br>')}</td>`}).join('')}</tr>`).join('')}</table></div>`}
+/* ---------- downloads ---------- */
+const txt=c=>c.t;
+function dl(fmt){const L=[],add=(m,k)=>L.push({title:(m=='c'?'Class ':'Teacher: ')+k,g:grid(m,k)});
+ if(scope=='one')add(view.m,view.k);else if(scope=='c')classes().forEach(c=>S.tt[c.key]&&add('c',c.key));else tnames().forEach(t=>add('t',t));
+ const nm=scope=='one'?L[0].title.replace(/[^\w]+/g,'-'):scope=='c'?'class-timetables':'teacher-timetables',head=g=>g.head.map(String),body=g=>g.body.map(r=>r.map(txt)),sub=S.school.name+(S.school.term?' · '+S.school.term:'');
+ if(fmt=='pdf'){if(!window.jspdf){alert('PDF library could not load (check your internet connection).');return}
+  const doc=new window.jspdf.jsPDF({orientation:'landscape',unit:'mm',format:'a4'});
+  L.forEach((it,i)=>{if(i)doc.addPage();doc.setFontSize(16);doc.text(it.title,14,16);doc.setFontSize(10);doc.text(sub,14,22);
+   doc.autoTable({head:[head(it.g)],body:body(it.g),startY:27,theme:'grid',styles:{halign:'center',valign:'middle',fontSize:9,cellPadding:3,minCellHeight:13},headStyles:{fillColor:[79,70,229]},columnStyles:{0:{fontStyle:'bold',fillColor:[238,240,255]}}})});
+  doc.save(nm+'.pdf')}
+ else if(fmt=='xls'){if(!window.XLSX){alert('Excel library could not load (check your internet connection).');return}
+  const wb=XLSX.utils.book_new(),used={};
+  L.forEach(it=>{const n=it.title.replace(/[\\/?*\[\]:]/g,'').slice(0,28)||'Sheet';let k=n,j=1;while(used[k])k=n+(++j);used[k]=1;
+   const ws=XLSX.utils.aoa_to_sheet([[it.title],[sub],[],head(it.g),...body(it.g)]);ws['!cols']=head(it.g).map((_,x)=>({wch:x?16:14}));XLSX.utils.book_append_sheet(wb,ws,k)});
+  XLSX.writeFile(wb,nm+'.xlsx')}
+ else{const h=L.map((it,i)=>`${i?'<br clear=all style="page-break-before:always">':''}<h2>${esc(it.title)}</h2><p>${esc(sub)}</p><table border=1 cellspacing=0 cellpadding=5><tr>${head(it.g).map(x=>`<th bgcolor="#e0e4ff">${esc(x).replace(/\n/g,'<br>')}</th>`).join('')}</tr>${it.g.body.map(r=>`<tr>${r.map(c=>`<td align=center>${esc(c.t).replace(/\n/g,'<br>')}</td>`).join('')}</tr>`).join('')}</table>`).join('');
+  const html=`<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><style>@page{size:landscape;mso-page-orientation:landscape;margin:1.5cm}body{font-family:Calibri,Arial}table{border-collapse:collapse;width:100%}td,th{font-size:10pt}</style></head><body>${h}</body></html>`;
+  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['\ufeff'+html],{type:'application/msword'}));a.download=nm+'.doc';document.body.appendChild(a);a.click();a.remove()}}
+function saveFile(){const d={...S};delete d._ok;const a=document.createElement('a');
+ a.href=URL.createObjectURL(new Blob([JSON.stringify(d,null,1)],{type:'application/json'}));
+ a.download='timetable-data-'+(S.school.name||'school').replace(/[^\w]+/g,'-')+'.json';document.body.appendChild(a);a.click();a.remove()}
+function loadFile(inp){const f=inp.files[0];if(!f)return;const rd=new FileReader();
+ rd.onload=()=>{try{const d=JSON.parse(rd.result);if(!d.school||!Array.isArray(d.grades)||!Array.isArray(d.subjects))throw 0;
+  S=Object.assign(def(),d);mig();save();$('#msg').innerHTML='<div class="ok">Data loaded. You can edit everything and regenerate, or view the saved timetables below.</div>';render()}
+  catch(e){alert('That file is not a valid timetable data file.')}inp.value=''};rd.readAsText(f)}
+function resetAll(){if(confirm('Delete all data and start over?')){S=def();save();$('#msg').innerHTML='';render()}}
+render();
+</script></body></html>
